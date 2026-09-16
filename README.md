@@ -1,4 +1,4 @@
-# Cap Flick — bottle cap flicking game
+# CapSoccer — bottle cap flicking game
 
 A 3D physics game recreating the schoolyard bottle-cap game: a rectangular
 table with a wide paper goal at each end, caps scattered across the board, and
