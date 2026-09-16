@@ -162,6 +162,50 @@
   .modal button:hover { background: rgba(255,255,255,0.15); }
   .modal button.primary { background: #2f74c0; border-color: transparent; }
   .modal button.primary:hover { background: #3b86d4; }
+
+  .or {
+    margin: 14px 0 2px;
+    font-size: 11px; letter-spacing: 1.5px;
+    color: rgba(242,236,224,0.4);
+    text-transform: uppercase;
+  }
+  #online-code {
+    display: block; width: 100%; margin-top: 12px; padding: 11px 12px;
+    background: rgba(0,0,0,0.3);
+    border: 1px solid rgba(255,255,255,0.16);
+    border-radius: 10px;
+    color: #f2ece0;
+    font-size: 18px; letter-spacing: 4px; text-align: center; text-transform: uppercase; font-weight: 600;
+    outline: none;
+  }
+  #online-code:focus { border-color: #2f74c0; }
+  #online-code::placeholder { letter-spacing: 1px; color: rgba(242,236,224,0.3); font-size: 13px; font-weight: 400; }
+  #online-status { margin-top: 14px; min-height: 20px; font-size: 13px; color: rgba(242,236,224,0.85); line-height: 1.6; }
+  #online-status.warn { color: #ffb08a; }
+  #online-status .code {
+    display: inline-block;
+    font-size: 22px; letter-spacing: 5px; font-weight: 700;
+    color: #ffe9c7; text-shadow: 0 0 16px rgba(255,220,160,0.35);
+    margin: 4px 0;
+  }
+  #online-status .copy {
+    display: inline-block; margin-left: 8px; padding: 3px 10px;
+    border: 1px solid rgba(255,255,255,0.2); border-radius: 7px;
+    font-size: 11px; color: #f2ece0; cursor: pointer;
+    background: rgba(255,255,255,0.07);
+  }
+  #online-status .copy:hover { background: rgba(255,255,255,0.14); }
+
+  #room-chip {
+    position: fixed; left: 14px; bottom: 14px; z-index: 10;
+    padding: 6px 12px; border-radius: 9px;
+    background: rgba(20,16,12,0.55);
+    border: 1px solid rgba(255,255,255,0.12);
+    backdrop-filter: blur(6px);
+    color: rgba(242,236,224,0.8);
+    font-size: 12px; letter-spacing: 0.8px;
+    display: none;
+  }
 </style>
 </head>
 <body>
@@ -195,6 +239,7 @@
     <p>Six caps each, wide paper goals at both ends. Place your formation, then flick caps at the far goal — deflect, block and knock the other side's caps around.</p>
     <button class="primary" id="mode-ai">Vs Computer (AI)</button>
     <button id="mode-pvp">Two players (hot-seat)</button>
+    <button id="mode-online">Online (invite code)</button>
   </div>
 </div>
 
@@ -206,6 +251,22 @@
   </div>
 </div>
 
+<div class="modal-overlay hidden" id="online-overlay">
+  <div class="modal">
+    <h2>Online multiplayer</h2>
+    <p>Create a room and share the 6-letter code, or enter a friend's code to join. Blue hosts the room.</p>
+    <button class="primary" id="online-create">Create room</button>
+    <div class="or">or</div>
+    <input id="online-code" placeholder="Enter 6-letter invite code" maxlength="6" autocomplete="off" spellcheck="false" />
+    <button id="online-join">Join game</button>
+    <div id="online-status"></div>
+    <button id="online-back">Back</button>
+  </div>
+</div>
+
+<div id="room-chip"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
 (function () {
@@ -812,6 +873,7 @@
 
   function showModeSelect() {
     clearTimeout(aiTimer); aiTimer = null;
+    if (mode === 'online') NET.leave();
     state = 'mode-select';
     clearCaps();
     mode = null;
@@ -889,6 +951,7 @@
       addCap(placingColor, pt.x, pt.z);
       placedCount++;
       SFX.place();
+      if (mode === 'online') NET.broadcast({ t: 'place', color: placingColor, x: pt.x, z: pt.z });
 
       if (placedCount < 6) {
         instructionsEl.textContent = `${placingColor === 'blue' ? 'Blue' : 'Red'} — click empty spots to place your caps (${placedCount}/6)`;
@@ -900,6 +963,10 @@
         if (mode === 'ai') {
           scatterRedCaps();
           beginPlay('blue');
+        } else if (mode === 'online') {
+          NET.broadcast({ t: 'placeDone', color: 'blue' });
+          state = 'online-wait';
+          instructionsEl.textContent = 'Waiting for Red to place the caps\u2026';
         } else {
           placingColor = 'red';
           placedCount = 0;
@@ -908,7 +975,13 @@
           instructionsEl.textContent = `Red — click empty spots to place your ${RED_COUNT} caps`;
         }
       } else {
-        beginPlay('blue');
+        if (mode === 'online') {
+          NET.broadcast({ t: 'placeDone', color: 'red' });
+          state = 'online-wait';
+          instructionsEl.textContent = 'Waiting for Blue to play\u2026';
+        } else {
+          beginPlay('blue');
+        }
       }
       return;
     }
@@ -948,15 +1021,24 @@
     const dx = dragCap.x - dragStartWorld.x;
     const dz = dragCap.z - dragStartWorld.z;
     const dist = Math.sqrt(dx * dx + dz * dz);
-    if (dist > 0.15) {
+if (dist > 0.15) {
       const power = Math.min(dist, MAX_DRAG) / MAX_DRAG;
       const boost = Math.pow(power, POWER_CURVE);
-      dragCap.vx = (dx / dist) * boost * POWER_SCALE;
-      dragCap.vz = (dz / dist) * boost * POWER_SCALE;
-      SFX.flick(boost);
-      recordsFlick();
-      state = 'resolving';
-      instructionsEl.textContent = 'Caps settling…';
+      const frx = (dx / dist) * boost * POWER_SCALE;
+      const frz = (dz / dist) * boost * POWER_SCALE;
+      if (mode === 'online') {
+        const idx = caps.indexOf(dragCap);
+        SFX.flick(boost);
+        if (NET.isHost) { NET.applyHostFlick(idx, frx, frz); }
+        else { NET.sendFlickReq(idx, frx, frz); }
+      } else {
+        dragCap.vx = frx;
+        dragCap.vz = frz;
+        SFX.flick(boost);
+        recordsFlick();
+        state = 'resolving';
+        instructionsEl.textContent = 'Caps settling\u2026';
+      }
     }
     dragCap = null;
   }
@@ -1049,6 +1131,7 @@
 
     // Out of caps ends the match immediately
     if (blueAlive === 0 || redAlive === 0) {
+      if (mode === 'online' && NET.isHost) NET.broadcast({ t: 'state', state: 'gameover' });
       if (blueAlive === 0 && redAlive === 0) {
         const w = winnerByScore();
         endMatch(w ? (w === 'blue' ? 'Blue wins!' : 'Red wins!') : 'Draw!',
@@ -1063,6 +1146,7 @@
 
     // Max turns reached — the score decides
     if (turnCount >= MAX_TURNS) {
+      if (mode === 'online' && NET.isHost) NET.broadcast({ t: 'state', state: 'gameover' });
       const w = winnerByScore();
       endMatch(w ? (w === 'blue' ? 'Blue wins!' : 'Red wins!') : 'Draw!',
         `Max turns reached. Blue ${blueScore} – ${redScore} Red.`);
@@ -1076,6 +1160,9 @@
     } else {
       currentPlayer = currentPlayer === 'blue' ? 'red' : 'blue';
       beginPlay(currentPlayer);
+    }
+    if (mode === 'online' && NET.isHost) {
+      NET.broadcast({ t: 'state', state: 'aiming', turn: currentPlayer, attempts });
     }
   }
 
@@ -1098,6 +1185,7 @@
   // ---------- Physics ----------
   function physicsStep() {
     if (state !== 'resolving') return;
+    if (mode === 'online' && !NET.isHost) return; // host simulates; guest mirrors snapshots
 
     for (const c of caps) {
       if (c.removed) continue;
@@ -1160,13 +1248,367 @@
       c.mesh.position.x = c.x;
       c.mesh.position.z = c.z;
     }
+    if (mode === 'online' && NET.isHost) {
+      const pos = caps.map(c => ({ x: c.x, z: c.z }));
+      NET.broadcast({ t: 'phys', pos });
+    }
 
     const maxSpeed = caps.reduce((m, c) => c.removed ? m : Math.max(m, Math.sqrt(c.vx * c.vx + c.vz * c.vz)), 0);
     if (maxSpeed < SETTLE_SPEED) {
       for (const c of caps) { c.vx = 0; c.vz = 0; }
+      if (mode === 'online' && NET.isHost) NET.hostSettleBroadcast();
       resolveTurn();
     }
   }
+
+  // ---------- Online multiplayer (WebRTC via PeerJS cloud, no server) ----------
+  // Host (Blue) is authoritative: validates inputs, simulates, and broadcasts
+  // settle snapshots so both screens cannot drift. Physics uses a fixed timestep,
+  // so a flick launched with the same velocities replays identically on both sides.
+  const CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  const onlineEls = {
+    overlay: document.getElementById('online-overlay'),
+    status: document.getElementById('online-status'),
+    code: document.getElementById('online-code'),
+    join: document.getElementById('online-join'),
+    create: document.getElementById('online-create'),
+    back: document.getElementById('online-back'),
+    chip: document.getElementById('room-chip')
+  };
+
+  const NET = {
+    isHost: false,
+    peer: null,
+    conn: null,
+    code: '',
+    open: false,
+
+    connected() { return !!(this.conn && this.conn.open); },
+
+    broadcast(obj) {
+      if (this.connected()) {
+        try { this.conn.send(obj); } catch (e) {}
+      }
+    },
+
+    makeCode() {
+      let c = '';
+      for (let i = 0; i < 6; i++) c += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+      return c;
+    },
+
+    statusHTML(html, warn) {
+      onlineEls.status.innerHTML = html;
+      onlineEls.status.className = warn ? 'warn' : '';
+    },
+
+    setChip() {
+      onlineEls.chip.textContent = this.isHost
+        ? 'Room ' + this.code + ' — you are Blue'
+        : 'Joined ' + this.code.toUpperCase() + ' — you are Red';
+      onlineEls.chip.style.display = 'block';
+    },
+
+    leave() {
+      this.open = false;
+      try { if (this.conn) this.conn.close(); } catch (e) {}
+      try { if (this.peer) this.peer.destroy(); } catch (e) {}
+      this.conn = null;
+      this.peer = null;
+      onlineEls.chip.style.display = 'none';
+      onlineEls.overlay.classList.add('hidden');
+    },
+
+    createRoom() {
+      if (typeof Peer === 'undefined') { this.statusHTML('Networking library failed to load — check your connection.', true); return; }
+      if (this.peer) return;
+      this.isHost = true;
+      this.statusHTML('Claiming a room…');
+      this.tryRegister(0);
+    },
+
+    tryRegister(tries) {
+      this.code = this.makeCode();
+      this.peer = new Peer(this.code, { debug: 1 });
+      this.peer.on('open', () => {
+        onlineEls.status.innerHTML =
+          'Room code <span class="code">' + NET.code + '</span>' +
+          '<br><span class="copy" id="cd-copy" role="button" tabindex="0">Copy</span> — waiting for a friend to join…';
+        const cp = document.getElementById('cd-copy');
+        if (cp) cp.addEventListener('click', copyCode);
+      });
+      this.peer.on('connection', (conn) => this.onConnection(conn));
+      this.peer.on('error', (err) => {
+        if (err && err.type === 'unavailable-id' && tries < 8) {
+          if (this.peer) { try { this.peer.destroy(); } catch (e) {} }
+          this.peer = null;
+          this.tryRegister(tries + 1);
+          return;
+        }
+        this.peerError(err);
+      });
+    },
+
+    joinRoom() {
+      if (typeof Peer === 'undefined') { this.statusHTML('Networking library failed to load — check your connection.', true); return; }
+      const code = (onlineEls.code.value || '').trim().toUpperCase();
+      if (!/^[A-Z0-9]{6}$/.test(code)) { this.statusHTML('Codes are 6 letters/numbers. Try again.', true); return; }
+      this.isHost = false;
+      this.code = code;
+      this.statusHTML('Connecting…');
+      const peerRef = new Peer({ debug: 1 });
+      this.peer = peerRef;
+      peerRef.on('open', () => {
+        const c = peerRef.connect(code, { reliable: true });
+        this.conn = c;
+        c.on('open', () => {
+          this.open = true;
+          this.statusHTML('Connected. Waiting for the host to place Blue\u2019s caps\u2026');
+        });
+        c.on('data', (d) => this.onData(d));
+        c.on('close', () => this.drop('The host left the game.'));
+        c.on('error', () => this.drop('Connection lost.'));
+      });
+      peerRef.on('error', (err) => {
+        if (err && err.type === 'peer-unavailable') this.statusHTML('No room found with that code. Check it and try again.', true);
+        else this.peerError(err);
+      });
+    },
+
+    peerError(err) {
+      if (this.open) { this.drop('Network error. Game ended.'); return; }
+      this.statusHTML('Couldn\u2019t reach the network — try again.', true);
+      if (this.peer) { try { this.peer.destroy(); } catch (e) {} }
+      this.peer = null;
+    },
+
+    onConnection(conn) {
+      this.conn = conn;
+      conn.on('open', () => {
+        this.open = true;
+        showOnlineSetupHost();
+        this.broadcast({ t: 'welcome' });
+        onlineEls.overlay.classList.add('hidden');
+        onlineEls.code.value = '';
+        this.setChip();
+      });
+      conn.on('data', (d) => this.onData(d));
+      conn.on('close', () => this.drop('Your friend left the game.'));
+      conn.on('error', () => this.drop('Connection lost.'));
+    },
+
+    onData(raw) {
+      const msg = (typeof raw === 'string') ? JSON.parse(raw) : raw;
+      if (!msg || typeof msg !== 'object') return;
+      switch (msg.t) {
+        case 'welcome':
+          if (this.isHost) break;
+          showOnlineSetupGuest();
+          onlineEls.overlay.classList.add('hidden');
+          onlineEls.code.value = '';
+          this.setChip();
+          break;
+
+        case 'place':
+          if (mode === 'online' && !this.isHost) addCap(msg.color, msg.x, msg.z);
+          break;
+
+        case 'placeDone':
+          if (state !== 'online-wait') break;
+          if (this.isHost && msg.color === 'red') {
+            beginPlay('blue');
+            this.broadcast({ t: 'state', state: 'aiming', turn: 'blue', attempts });
+          } else if (!this.isHost && msg.color === 'blue') {
+            placingColor = 'red';
+            placedCount = 0;
+            currentPlayer = 'red';
+            state = 'placing';
+            updateTurnUI();
+            instructionsEl.textContent = 'Red — click empty spots to place your 6 caps';
+          }
+          break;
+
+        case 'flickReq':
+          if (this.isHost) this.handleFlickReq(msg);
+          break;
+
+        case 'flick':
+          if (!this.isHost) this.applyRemoteFlick(msg.idx, msg.vx, msg.vz);
+          break;
+
+        case 'phys':
+          if (!this.isHost && Array.isArray(msg.pos)) {
+            for (let i = 0; i < msg.pos.length; i++) {
+              const c = caps[i];
+              if (!c) continue;
+              c.x = msg.pos[i].x;
+              c.z = msg.pos[i].z;
+              c.mesh.position.x = c.x;
+              c.mesh.position.z = c.z;
+            }
+          }
+          break;
+
+        case 'settle':
+          if (!this.isHost && Array.isArray(msg.pos)) {
+            for (let i = 0; i < msg.pos.length; i++) {
+              const c = caps[i];
+              if (!c) continue;
+              c.x = msg.pos[i].x;
+              c.z = msg.pos[i].z;
+              c.vx = 0; c.vz = 0;
+              c.mesh.position.x = c.x;
+              c.mesh.position.z = c.z;
+            }
+            if (state === 'resolving') resolveTurn();
+          }
+          break;
+
+        case 'state':
+          if (this.isHost) break;
+          if (msg.state === 'gameover') {
+            if (state !== 'gameover') resolveTurn();
+            state = 'gameover';
+          } else {
+            if (msg.state) state = msg.state;
+            if (msg.turn) currentPlayer = msg.turn;
+            attempts = msg.attempts;
+            attemptsEl.textContent = attempts;
+            if (msg.state === 'aiming') updateTurnUI();
+          }
+          break;
+
+        case 'reset':
+          this.leave();
+          showModeSelect();
+          break;
+      }
+    },
+
+    // guest: send a flick for the host to authorise
+    sendFlickReq(idx, vx, vz) {
+      if (state !== 'aiming' || this.isHost) return false;
+      this.broadcast({ t: 'flickReq', idx, vx, vz });
+      instructionsEl.textContent = 'Waiting for the host\u2026';
+      return true;
+    },
+
+    // host: apply the flick authority (local blue flick, or a validated red flickReq)
+    applyHostFlick(idx, vx, vz) {
+      if (state !== 'aiming' || !this.isHost) return false;
+      const cap = caps[idx];
+      if (!cap || cap.removed || cap.color !== currentPlayer) return false;
+      cap.vx = vx;
+      cap.vz = vz;
+      recordsFlick();
+      state = 'resolving';
+      instructionsEl.textContent = 'Caps settling\u2026';
+      resultEl.className = '';
+      this.broadcast({ t: 'flick', idx, vx, vz });
+      return true;
+    },
+
+    handleFlickReq(msg) {
+      if (state !== 'aiming' || currentPlayer !== 'red') return;
+      const cap = caps[msg.idx];
+      if (!cap || cap.removed || cap.color !== 'red') return;
+      cap.vx = msg.vx;
+      cap.vz = msg.vz;
+      recordsFlick();
+      state = 'resolving';
+      instructionsEl.textContent = 'Caps settling\u2026';
+      resultEl.className = '';
+      this.broadcast({ t: 'flick', idx: msg.idx, vx: msg.vx, vz: msg.vz });
+    },
+
+    // guest: mirror the host-authorised flick and phase its own sim
+    applyRemoteFlick(idx, vx, vz) {
+      if (state !== 'aiming') return;
+      const cap = caps[idx];
+      if (!cap || cap.removed) return;
+      cap.vx = vx;
+      cap.vz = vz;
+      recordsFlick();
+      state = 'resolving';
+      instructionsEl.textContent = 'Caps settling\u2026';
+      resultEl.className = '';
+      isDragging = false;
+      dragCap = null;
+      aimLine.visible = false;
+    },
+
+    hostSettleBroadcast() {
+      const pos = caps.map(c => ({ x: c.x, z: c.z }));
+      this.broadcast({ t: 'settle', pos });
+    },
+
+    drop(why) {
+      this.leave();
+      if (why) {
+        showModeSelect();
+        instructionsEl.textContent = why;
+        setTimeout(() => {
+          if (mode === null && state === 'mode-select') instructionsEl.textContent = 'Pick a mode to start';
+        }, 3000);
+      }
+    }
+  };
+
+  function copyCode() {
+    const done = () => {
+      const c = document.getElementById('cd-copy');
+      if (!c) return;
+      c.textContent = 'Copied!';
+      setTimeout(() => { if (c) c.textContent = 'Copy'; }, 1500);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(NET.code).then(done, () => fallbackCopy(done));
+    } else {
+      fallbackCopy(done);
+    }
+  }
+  function fallbackCopy(done) {
+    const ta = document.createElement('textarea');
+    ta.value = NET.code;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); done(); } catch (e) {}
+    ta.remove();
+  }
+
+  function showOnlineSetupHost() {
+    startSetup('online');
+  }
+
+  function showOnlineSetupGuest() {
+    mode = 'online';
+    state = 'online-wait';
+    blueScore = 0; redScore = 0; attempts = 0; turnCount = 0;
+    placedCount = 0; placingColor = 'blue';
+    currentPlayer = 'red';
+    clearCaps();
+    updateScoreHUD();
+    attemptsEl.textContent = '0';
+    updateTurnUI();
+    instructionsEl.textContent = 'Connected — waiting for the host to place Blue\u2019s caps\u2026';
+  }
+
+  onlineEls.create.addEventListener('click', () => NET.createRoom());
+  onlineEls.join.addEventListener('click', () => NET.joinRoom());
+  onlineEls.code.addEventListener('keydown', (e) => { if (e.key === 'Enter') NET.joinRoom(); });
+  onlineEls.back.addEventListener('click', () => {
+    NET.leave();
+    onlineEls.overlay.classList.add('hidden');
+    modeOverlayEl.classList.remove('hidden');
+  });
+  document.getElementById('mode-online').addEventListener('click', () => {
+    modeOverlayEl.classList.add('hidden');
+    onlineEls.overlay.classList.remove('hidden');
+    onlineEls.status.innerHTML = '';
+    onlineEls.status.className = '';
+  });
 
   // ---------- Render loop ----------
   function animate() {
@@ -1203,7 +1645,16 @@
         return state;
       },
       setState: (s) => { state = s; },
-      setCurrentPlayer: (p) => { currentPlayer = p; }
+      setCurrentPlayer: (p) => { currentPlayer = p; },
+      net: NET,
+      onlineCode: () => NET.code,
+      onlineOpen: () => NET.open,
+      flickAs: (color, idx, vx, vz) => {
+        if (mode !== 'online') return 'not-online';
+        if (color === 'red' && !NET.isHost) return NET.sendFlickReq(idx, vx, vz) ? 'sent' : 'blocked';
+        if (color === 'blue' && NET.isHost) return NET.applyHostFlick(idx, vx, vz) ? 'flicked' : 'blocked';
+        return 'blocked';
+      }
     };
   }
 })();

@@ -13,8 +13,8 @@ full board of caps rather than one lane.
 ## Status
 
 - [x] Full table with wide paper goals at both ends (matches the sketch)
-- [x] Mode select screen — pick **Vs Computer (AI)** or **Two players (hot-seat)**
-      before each match
+- [x] Mode select screen — pick **Vs Computer (AI)**, **Two players (hot-seat)**,
+      or **Online (invite code)** before each match
 - [x] Formation phase — each side places its 6 caps anywhere on the table
       (blue first, then red in two-player)
 - [x] Alternate turns — blue flicks, board settles, red flicks, and so on
@@ -43,6 +43,12 @@ full board of caps rather than one lane.
 - [x] Punchy flicking feel — non-linear power curve (short pulls stay
       gentle, full pull blasts the cap ~half the table) with two-phase
       friction so fast caps glide then stop quickly instead of crawling
+- [x] Online multiplayer — host-only authority over WebRTC (PeerJS cloud
+      signalling, no server). Create a room and share a 6-letter invite
+      code; the host is Blue, the guest is Red. Both screens mirror
+      placements, live position snapshots during a flick, and an
+      authoritative settle frame each turn so scores and cap positions
+      never drift.
 - [ ] Not yet built: finer balance tuning (see "Next steps")
 
 ## How to play
@@ -116,5 +122,5 @@ The Red AI is deliberately simple — no pathfinding or lookahead:
 2. **Cap spin affecting bounce direction** — currently caps translate rigidly
    and spin is purely visual; adding tangential restitution would make
    deflections feel more physical.
-3. **Real-time or remote multiplayer** — only once hot-seat feels right; would
-   need a sync layer (WebSocket/WebRTC) since this is a self-contained client.
+3. **Tournament / best-of series** — track match score across rematches,
+   or a quick-play lobby system for random matchmaking.
