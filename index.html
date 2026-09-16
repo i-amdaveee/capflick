@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>CapSoccer</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -74,12 +75,6 @@
     0% { transform: scale(1); }
     45% { transform: scale(1.28); }
     100% { transform: scale(1); }
-  }
-
-  @media (max-width: 560px) {
-    .scoreboard { top: 8px; padding: 8px 10px; transform: translateX(-50%) scale(0.92); }
-    .side { width: 92px; }
-    .center { margin: 0 6px; padding: 0 8px; }
   }
 
   #reset-btn, #sound-btn {
@@ -205,6 +200,17 @@
     color: rgba(242,236,224,0.8);
     font-size: 12px; letter-spacing: 0.8px;
     display: none;
+  }
+
+  @media (max-width: 560px) {
+    .scoreboard { top: 8px; padding: 8px 8px; transform: translateX(-50%) scale(0.9); }
+    .side { width: 86px; }
+    .center { margin: 0 4px; padding: 0 8px; }
+    #reset-btn, #sound-btn { top: auto; bottom: 16px; height: 34px; }
+    #reset-btn { right: 16px; }
+    #sound-btn { right: 104px; }
+    #room-chip { left: 12px; bottom: 60px; top: auto; max-width: calc(100vw - 24px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #instructions { bottom: 60px; }
   }
 </style>
 </head>
@@ -486,6 +492,36 @@
   camera.position.set(0, 11.5, -12.8);
   camera.lookAt(0, 0, 1);
 
+  // Frame the table to fill the screen on any aspect: pull the camera back
+  // (and steepen it in portrait) until the whole table plus a margin is visible.
+  function frameTable() {
+    const aspect = window.innerWidth / window.innerHeight;
+    const cfg = aspect < 0.8
+      ? { px: 0, py: 17, pz: -3.5, lx: 0, ly: 0, lz: 0.4 } // tall portrait: more top-down
+      : { px: 0, py: 11.5, pz: -12.8, lx: 0, ly: 0, lz: 1 }; // landscape/desktop: current framing
+    const target = new THREE.Vector3(cfg.lx, cfg.ly, cfg.lz);
+    camera.position.set(cfg.px, cfg.py, cfg.pz);
+    camera.lookAt(target);
+    camera.updateMatrixWorld(true);
+    const corners = [[-4.3, -6.9], [4.3, -6.9], [-4.3, 6.9], [4.3, 6.9]];
+    const fits = () => {
+      for (const [x, z] of corners) {
+        const v = new THREE.Vector3(x, 0, z).project(camera);
+        if (v.x < -0.98 || v.x > 0.98 || v.y < -0.98 || v.y > 0.98) return false;
+      }
+      return true;
+    };
+    const dir = new THREE.Vector3().subVectors(camera.position, target).normalize();
+    let d = camera.position.distanceTo(target);
+    while (!fits() && d < 50) {
+      d += 0.4;
+      camera.position.copy(dir).multiplyScalar(d).add(target);
+      camera.lookAt(target);
+      camera.updateMatrixWorld(true);
+    }
+    camera.updateProjectionMatrix();
+  }
+
   const renderer = new THREE.WebGLRenderer({ antialias: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
@@ -495,7 +531,7 @@
 
   window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
-    camera.updateProjectionMatrix();
+    frameTable();
     renderer.setSize(window.innerWidth, window.innerHeight);
   });
 
@@ -940,6 +976,7 @@
 
   // ---------- Placement / flicking ----------
   function onDown(evt) {
+    if (evt.cancelable) evt.preventDefault();
     const pt = getWorldPointFromEvent(evt);
     if (!pt) return;
 
@@ -1166,12 +1203,10 @@ if (dist > 0.15) {
     }
   }
 
-  renderer.domElement.addEventListener('mousedown', onDown);
-  renderer.domElement.addEventListener('mousemove', onMove);
-  window.addEventListener('mouseup', onUp);
-  renderer.domElement.addEventListener('touchstart', onDown, { passive: true });
-  renderer.domElement.addEventListener('touchmove', onMove, { passive: true });
-  window.addEventListener('touchend', onUp);
+  renderer.domElement.addEventListener('pointerdown', onDown);
+  renderer.domElement.addEventListener('pointermove', onMove);
+  window.addEventListener('pointerup', onUp);
+  window.addEventListener('pointercancel', onUp);
 
   // ---------- UI wiring ----------
   window.addEventListener('pointerdown', () => SFX.unlock(), { once: true });
@@ -1616,6 +1651,7 @@ if (dist > 0.15) {
     physicsStep();
     renderer.render(scene, camera);
   }
+  frameTable();
   animate();
 
   // Initial state
@@ -1649,6 +1685,10 @@ if (dist > 0.15) {
       net: NET,
       onlineCode: () => NET.code,
       onlineOpen: () => NET.open,
+      screenOf: (x, z) => {
+        const v = new THREE.Vector3(x, 0, z).project(camera);
+        return { x: (v.x + 1) / 2 * window.innerWidth, y: (-v.y + 1) / 2 * window.innerHeight };
+      },
       flickAs: (color, idx, vx, vz) => {
         if (mode !== 'online') return 'not-online';
         if (color === 'red' && !NET.isHost) return NET.sendFlickReq(idx, vx, vz) ? 'sent' : 'blocked';
