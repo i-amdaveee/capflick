@@ -293,6 +293,7 @@
   const POWER_SCALE = 9.2;     // launch speed at 100% pull — reaches ~half the table
   const POWER_CURVE = 1.6;     // > 1: short pulls stay gentle, top end gets explosive
   const SETTLE_SPEED = 0.045;
+  const FIXED_DT = 0.016;      // physics runs on fixed timesteps, decoupled from frame rate
 
   // Game flow
   const MAX_TURNS = 20;        // total flicks (both sides) before the match ends on score
@@ -522,11 +523,12 @@
     camera.updateProjectionMatrix();
   }
 
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  const phone = (window.matchMedia && window.matchMedia('(pointer: coarse)').matches) || window.innerWidth < 820;
+  const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
   renderer.setSize(window.innerWidth, window.innerHeight);
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, phone ? 1.5 : 2));
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = phone ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
   wrap.appendChild(renderer.domElement);
 
   window.addEventListener('resize', () => {
@@ -540,7 +542,7 @@
   const key = new THREE.DirectionalLight(0xfff0d8, 0.95);
   key.position.set(-4, 12, -6);
   key.castShadow = true;
-  key.shadow.mapSize.set(2048, 2048);
+  key.shadow.mapSize.set(phone ? 1024 : 2048, phone ? 1024 : 2048);
   key.shadow.camera.left = -10;
   key.shadow.camera.right = 10;
   key.shadow.camera.top = 12;
@@ -557,9 +559,11 @@
     const bulb = new THREE.Mesh(new THREE.SphereGeometry(0.17, 16, 12), lampBulbMat);
     bulb.position.set(lx, 5.3, lz);
     scene.add(bulb);
-    const lamp = new THREE.PointLight(0xffc98a, 0.32, 20, 2);
-    lamp.position.set(lx, 4.6, lz);
-    scene.add(lamp);
+    if (!phone) {
+      const lamp = new THREE.PointLight(0xffc98a, 0.32, 20, 2);
+      lamp.position.set(lx, 4.6, lz);
+      scene.add(lamp);
+    }
   });
 
   // ---------- Wood table ----------
@@ -1224,8 +1228,8 @@ if (dist > 0.15) {
 
     for (const c of caps) {
       if (c.removed) continue;
-      c.x += c.vx * 0.016;
-      c.z += c.vz * 0.016;
+      c.x += c.vx * FIXED_DT;
+      c.z += c.vz * FIXED_DT;
       const sp = Math.sqrt(c.vx * c.vx + c.vz * c.vz);
       const fr = sp > 2.0 ? FAST_FRICTION : SLOW_FRICTION;
       c.vx *= fr;
@@ -1646,9 +1650,19 @@ if (dist > 0.15) {
   });
 
   // ---------- Render loop ----------
+  const clock = new THREE.Clock();
+  let acc = 0;
   function animate() {
     requestAnimationFrame(animate);
-    physicsStep();
+    const dt = Math.min(clock.getDelta(), 0.1);
+    if (state === 'resolving') {
+      acc += dt;
+      let n = 0;
+      while (acc >= FIXED_DT && n < 5) { physicsStep(); acc -= FIXED_DT; n++; }
+      if (n === 5) acc = 0; // heavy frame: drop backlog so the sim stays real-time, no spiral
+    } else {
+      acc = 0;
+    }
     renderer.render(scene, camera);
   }
   frameTable();
